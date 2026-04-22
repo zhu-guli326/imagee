@@ -1,4 +1,4 @@
-import * as promptStore from "../src/lib/server/promptStore";
+import * as promptStore from "./_lib/promptStore";
 
 export async function GET() {
   return Response.json({

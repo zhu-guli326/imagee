@@ -1,4 +1,4 @@
-import { incrementPromptLike } from "../../../src/lib/server/promptStore";
+import { incrementPromptLike } from "../../_lib/promptStore";
 
 function json(body: unknown, init?: ResponseInit) {
   return Response.json(body, init);

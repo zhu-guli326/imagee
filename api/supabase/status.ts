@@ -1,4 +1,4 @@
-import { getSupabaseStatus } from "../../src/lib/server/promptStore";
+import { getSupabaseStatus } from "../_lib/promptStore";
 
 function json(body: unknown, init?: ResponseInit) {
   return Response.json(body, init);

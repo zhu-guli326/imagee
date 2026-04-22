@@ -1,4 +1,4 @@
-import { incrementPromptView } from "../../../src/lib/server/promptStore";
+import { incrementPromptView } from "../../_lib/promptStore";
 
 function json(body: unknown, init?: ResponseInit) {
   return Response.json(body, init);

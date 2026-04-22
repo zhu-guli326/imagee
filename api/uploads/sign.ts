@@ -1,4 +1,4 @@
-import { createSignedUploadTargets } from "../../src/lib/server/promptStore";
+import { createSignedUploadTargets } from "../_lib/promptStore";
 
 function json(body: unknown, init?: ResponseInit) {
   return Response.json(body, init);

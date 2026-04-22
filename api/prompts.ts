@@ -1,4 +1,4 @@
-import { createPromptRecord, listPrompts } from "../src/lib/server/promptStore";
+import { createPromptRecord, listPrompts } from "./_lib/promptStore";
 
 function json(body: unknown, init?: ResponseInit) {
   return Response.json(body, init);
