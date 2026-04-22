@@ -297,6 +297,7 @@ export default function App() {
   const [isFilterPanelOpen, setIsFilterPanelOpen] = useState(false);
   const [isUploadModalOpen, setIsUploadModalOpen] = useState(false);
   const [isTutorialOpen, setIsTutorialOpen] = useState(false);
+  const [selectedPrompt, setSelectedPrompt] = useState<Prompt | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [likedIds, setLikedIds] = useState<string[]>(() => {
     const saved = localStorage.getItem(LIKED_STORAGE_KEY);
@@ -586,6 +587,7 @@ export default function App() {
                   onLike={() => handleLike(prompt.id)}
                   onView={() => handleView(prompt.id)}
                   isLiked={likedIds.includes(prompt.id)}
+                  onOpen={() => setSelectedPrompt(prompt)}
                 />
               ))}
             </div>
@@ -636,6 +638,12 @@ export default function App() {
         )}
         {isTutorialOpen && (
           <TutorialModal onClose={() => setIsTutorialOpen(false)} />
+        )}
+        {selectedPrompt && (
+          <PromptDetailModal
+            prompt={selectedPrompt}
+            onClose={() => setSelectedPrompt(null)}
+          />
         )}
       </AnimatePresence>
     </div>
@@ -730,12 +738,14 @@ function PromptCard({
   onLike,
   onView,
   isLiked,
+  onOpen,
 }: {
   key?: React.Key;
   prompt: Prompt;
   onLike: () => void | Promise<void>;
   onView: () => void | Promise<void>;
   isLiked: boolean;
+  onOpen: () => void;
 }) {
   const [copied, setCopied] = useState(false);
   const primaryImageUrl = getPrimaryImageUrl(prompt);
@@ -790,6 +800,7 @@ function PromptCard({
           alt={promptTitle}
           className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105"
           referrerPolicy="no-referrer"
+          onClick={onOpen}
         />
 
         <div className="absolute inset-0 bg-black/25 opacity-0 transition-opacity group-hover:opacity-100 flex items-end p-3 md:p-4">
@@ -814,9 +825,15 @@ function PromptCard({
 
       <div className="flex items-start justify-between gap-2 md:gap-3">
         <div className="flex-1 min-w-0 pr-1 md:pr-2">
-          <h3 className="text-xs font-bold text-near-black truncate group-hover:text-brand transition-colors mb-2 md:mb-3 md:text-sm">
-            {promptTitle}
-          </h3>
+          <button
+            type="button"
+            onClick={onOpen}
+            className="block w-full text-left"
+          >
+            <h3 className="text-xs font-bold text-near-black truncate group-hover:text-brand transition-colors mb-2 md:mb-3 md:text-sm">
+              {promptTitle}
+            </h3>
+          </button>
           <p className="hidden text-xs leading-6 text-stone line-clamp-2 md:block">
             {prompt.prompt || "暂未填写提示词细节"}
           </p>
@@ -844,6 +861,117 @@ function PromptCard({
         </div>
       </div>
     </motion.div>
+  );
+}
+
+function PromptDetailModal({
+  prompt,
+  onClose,
+}: {
+  prompt: Prompt;
+  onClose: () => void;
+}) {
+  const imageUrl = getPrimaryImageUrl(prompt);
+  const promptTitle = getPromptTitle(prompt);
+  const fullPrompt = prompt.prompt || "暂未填写提示词细节";
+  const sourceUrl = prompt.sourceUrl?.trim();
+  const createdAt = new Date(prompt.createdAt).toLocaleString("zh-CN", {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+
+  return (
+    <div className="fixed inset-0 z-[120] flex items-center justify-center p-3 md:p-6">
+      <motion.div
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        exit={{ opacity: 0 }}
+        onClick={onClose}
+        className="absolute inset-0 bg-near-black/70 backdrop-blur-sm"
+      />
+
+      <motion.div
+        initial={{ opacity: 0, scale: 0.96, y: 20 }}
+        animate={{ opacity: 1, scale: 1, y: 0 }}
+        exit={{ opacity: 0, scale: 0.96, y: 20 }}
+        className="relative w-full max-w-6xl overflow-hidden rounded-[28px] border border-border-cream bg-white shadow-2xl"
+      >
+        <div className="flex items-center justify-between border-b border-border-cream px-5 py-4 md:px-8 md:py-5">
+          <div className="min-w-0 pr-4">
+            <h2 className="truncate font-serif text-xl text-near-black md:text-3xl">{promptTitle}</h2>
+            <p className="mt-1 text-xs text-stone md:text-sm">{createdAt}</p>
+          </div>
+          <button onClick={onClose} className="text-stone transition-colors hover:text-near-black">
+            <X size={24} />
+          </button>
+        </div>
+
+        <div className="grid max-h-[85vh] grid-cols-1 overflow-y-auto md:grid-cols-[minmax(0,1.1fr)_minmax(320px,0.9fr)]">
+          <div className="bg-[#0f0f0f] p-4 md:p-6">
+            <img
+              src={imageUrl}
+              alt={promptTitle}
+              className="max-h-[72vh] w-full rounded-2xl object-contain"
+              referrerPolicy="no-referrer"
+            />
+          </div>
+
+          <div className="space-y-6 p-5 md:p-8">
+            <div className="flex flex-wrap gap-2">
+              {(prompt.tags || []).map((tag) => (
+                <span
+                  key={tag}
+                  className="rounded-full border border-border-warm bg-ivory px-3 py-1 text-xs font-bold text-stone"
+                >
+                  {tag}
+                </span>
+              ))}
+            </div>
+
+            <div className="space-y-3">
+              <p className="text-xs font-bold uppercase tracking-[0.18em] text-stone">完整提示词</p>
+              <div className="rounded-2xl border border-border-cream bg-ivory/70 p-4">
+                <p className="whitespace-pre-wrap text-sm leading-7 text-near-black">{fullPrompt}</p>
+              </div>
+            </div>
+
+            {sourceUrl && (
+              <div className="space-y-3">
+                <p className="text-xs font-bold uppercase tracking-[0.18em] text-stone">来源链接</p>
+                <a
+                  href={sourceUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="block break-all rounded-2xl border border-border-cream bg-ivory/70 p-4 text-sm text-brand underline-offset-4 hover:underline"
+                >
+                  {sourceUrl}
+                </a>
+              </div>
+            )}
+
+            <div className="flex flex-wrap gap-3">
+              <button
+                type="button"
+                onClick={() => navigator.clipboard.writeText(fullPrompt)}
+                className="inline-flex h-11 items-center justify-center rounded-full bg-near-black px-5 text-sm font-bold text-white transition-opacity hover:opacity-90"
+              >
+                复制完整提示词
+              </button>
+              <button
+                type="button"
+                onClick={() => downloadImage(imageUrl, `${promptTitle}-original.png`)}
+                className="inline-flex h-11 items-center justify-center rounded-full border border-border-warm bg-white px-5 text-sm font-bold text-near-black transition-colors hover:bg-sand/50"
+              >
+                下载原图
+              </button>
+            </div>
+          </div>
+        </div>
+      </motion.div>
+    </div>
   );
 }
 
