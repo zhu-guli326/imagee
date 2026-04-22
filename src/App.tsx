@@ -22,7 +22,7 @@ import {
 import { AnimatePresence, motion } from "motion/react";
 import confetti from "canvas-confetti";
 import { cn } from "./lib/utils";
-import { supabase, supabaseStorageBucket } from "./lib/supabase";
+import { supabase, supabaseConfigError, supabaseStorageBucket } from "./lib/supabase";
 
 interface Prompt {
   id: string;
@@ -894,6 +894,10 @@ function UploadModal({
   const handleSubmit = async (event: React.FormEvent) => {
     event.preventDefault();
     setSubmitError("");
+    if (supabaseConfigError || !supabase) {
+      setSubmitError("上传功能暂未配置完成，请先补齐站点环境变量。");
+      return;
+    }
     if (!originalImageFile) {
       setSubmitError("请先上传原图。");
       return;
