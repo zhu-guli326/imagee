@@ -1,0 +1,38 @@
+[
+  {
+    "id": "1",
+    "title": "Neon Cyberpunk Cityscape",
+    "prompt": "Highly detailed cyberpunk city at night, neon lights, rainy streets, cinematic lighting, 8k, unreal engine 5 render, synthwave aesthetic",
+    "imageUrl": "https://picsum.photos/seed/cyberpunk/800/1000",
+    "tags": ["Cyberpunk", "City", "Night"],
+    "likes": 42,
+    "createdAt": "2024-04-20T10:00:00Z"
+  },
+  {
+    "id": "2",
+    "title": "Ethereal Forest Spirit",
+    "prompt": "Ethereal spirit of a deer in a mystical forest, glowing antlers, floating spores, magical atmosphere, high fantasy art style, digital painting",
+    "imageUrl": "https://picsum.photos/seed/forest/800/1100",
+    "tags": ["Fantasy", "Forest", "Spirit"],
+    "likes": 88,
+    "createdAt": "2024-04-20T11:00:00Z"
+  },
+  {
+    "id": "3",
+    "title": "Abstract Ocean Waves",
+    "prompt": "Abstract oil painting of ocean waves, thick brushstrokes, vibrant blues and teals, textured canvas, expressive art style",
+    "imageUrl": "https://picsum.photos/seed/ocean/800/800",
+    "tags": ["Abstract", "Ocean", "Art"],
+    "likes": 25,
+    "createdAt": "2024-04-20T12:00:00Z"
+  },
+  {
+    "id": "4",
+    "title": "Isometric Home Office",
+    "prompt": "Isometric 3D render of a cozy home office, plants on desk, warm sunlight, soft shadows, clean minimal design, blender 3d",
+    "imageUrl": "https://picsum.photos/seed/office/800/1200",
+    "tags": ["Isometric", "3D", "Minimal"],
+    "likes": 56,
+    "createdAt": "2024-04-20T13:00:00Z"
+  }
+]

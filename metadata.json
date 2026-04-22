@@ -1,0 +1,6 @@
+{
+  "name": "PromptJournal",
+  "description": "一个富有社论气息的 AI 提示词沙龙，支持探索、分享与点赞，采用 Claude 启发的人文主义设计风格。",
+  "requestFramePermissions": [],
+  "majorCapabilities": []
+}

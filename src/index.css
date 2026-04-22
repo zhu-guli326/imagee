@@ -1,0 +1,67 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&display=swap');
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-serif: "Georgia", serif;
+  --font-display: "Georgia", serif;
+
+  --color-brand: #c96442; /* Terracotta */
+  --color-brand-muted: #d97757;
+  --color-parchment: #f5f4ed;
+  --color-ivory: #faf9f5;
+  --color-near-black: #141413;
+  --color-sand: #e8e6dc;
+  --color-olive: #5e5d59;
+  --color-stone: #87867f;
+  --color-border-cream: #f0eee6;
+  --color-border-warm: #e8e6dc;
+}
+
+@layer base {
+  body {
+    @apply bg-parchment text-near-black font-sans antialiased;
+    line-height: 1.6;
+  }
+
+  h1, h2, h3, h4, h5, h6 {
+    @apply font-serif font-medium;
+    line-height: 1.2;
+  }
+}
+
+@layer components {
+  .btn-claude-primary {
+    @apply bg-brand text-ivory px-4 py-2 rounded-lg font-medium transition-all hover:opacity-90 active:scale-[0.98] shadow-[0_0_0_1px_#c96442];
+  }
+
+  .btn-claude-secondary {
+    @apply bg-sand text-[#4d4c48] px-4 py-2 rounded-lg font-medium transition-all hover:bg-[#dedc01]/10 active:scale-[0.98] shadow-[0_0_0_1px_#d1cfc5];
+  }
+
+  .btn-claude-ghost {
+    @apply text-olive hover:text-near-black transition-colors;
+  }
+
+  .claude-card {
+    @apply bg-ivory border border-border-cream rounded-xl transition-all duration-300;
+  }
+
+  .claude-card-elevated {
+    @apply shadow-[rgba(0,0,0,0.05)_0px_4px_24px];
+  }
+
+  .claude-input {
+    @apply bg-white border border-border-warm rounded-xl px-4 py-2 outline-none focus:ring-2 focus:ring-[#3898ec]/20 focus:border-[#3898ec] transition-all;
+  }
+
+  .custom-scroll::-webkit-scrollbar {
+    width: 6px;
+  }
+  .custom-scroll::-webkit-scrollbar-track {
+    @apply bg-parchment;
+  }
+  .custom-scroll::-webkit-scrollbar-thumb {
+    @apply bg-stone/30 rounded-full hover:bg-stone/50 transition-colors;
+  }
+}
