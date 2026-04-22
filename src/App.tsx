@@ -22,6 +22,12 @@ import {
 import { AnimatePresence, motion } from "motion/react";
 import confetti from "canvas-confetti";
 import { cn } from "./lib/utils";
+import {
+  publicSupabaseAnonKey,
+  publicSupabaseUrl,
+  supabase,
+  supabaseStorageBucket,
+} from "./lib/supabase";
 
 interface Prompt {
   id: string;
@@ -32,6 +38,8 @@ interface Prompt {
   sourceUrl?: string;
   originalImageUrl?: string;
   originalImageName?: string;
+  originalImageUrls?: string[];
+  originalImageNames?: string[];
   referenceImageUrl?: string;
   referenceImageName?: string;
   tags: string[];
@@ -39,6 +47,16 @@ interface Prompt {
   views: number;
   createdAt: string;
 }
+
+type UploadImagePreview = {
+  url: string;
+  name: string;
+};
+
+type UploadedAsset = {
+  url: string;
+  name: string;
+};
 
 const LIKED_STORAGE_KEY = "liked_prompts";
 const VIEWED_PROMPTS_KEY = "viewed_prompts";
@@ -70,7 +88,13 @@ function inferCategory(prompt: Prompt) {
 }
 
 function normalizePrompt(prompt: Prompt): Prompt {
-  const primaryImageUrl = prompt.originalImageUrl || prompt.imageUrl;
+  const normalizedOriginalImageUrls = Array.isArray(prompt.originalImageUrls)
+    ? prompt.originalImageUrls.filter(Boolean)
+    : [];
+  const normalizedOriginalImageNames = Array.isArray(prompt.originalImageNames)
+    ? prompt.originalImageNames.filter(Boolean)
+    : [];
+  const primaryImageUrl = normalizedOriginalImageUrls[0] || prompt.originalImageUrl || prompt.imageUrl;
 
   return {
     ...prompt,
@@ -80,6 +104,12 @@ function normalizePrompt(prompt: Prompt): Prompt {
     aspectRatio: prompt.aspectRatio || "4:3",
     sourceUrl: prompt.sourceUrl || "",
     originalImageUrl: primaryImageUrl,
+    originalImageUrls: normalizedOriginalImageUrls.length > 0
+      ? normalizedOriginalImageUrls
+      : (primaryImageUrl ? [primaryImageUrl] : []),
+    originalImageNames: normalizedOriginalImageNames.length > 0
+      ? normalizedOriginalImageNames
+      : (prompt.originalImageName ? [prompt.originalImageName] : []),
     tags: Array.isArray(prompt.tags) ? prompt.tags : [],
     likes: typeof prompt.likes === "number" ? prompt.likes : 0,
     views: typeof prompt.views === "number" ? prompt.views : 0,
@@ -118,7 +148,7 @@ function aspectRatioLabelToValue(ratio: string) {
 }
 
 function getPrimaryImageUrl(prompt: Prompt) {
-  return prompt.originalImageUrl || prompt.imageUrl;
+  return prompt.originalImageUrls?.[0] || prompt.originalImageUrl || prompt.imageUrl;
 }
 
 function getPromptTitle(prompt: Prompt) {
@@ -176,6 +206,106 @@ async function downloadImage(imageUrl: string, filename: string) {
   } catch {
     window.open(imageUrl, "_blank", "noopener,noreferrer");
   }
+}
+
+function getFileExtension(file: File) {
+  const matched = file.name.match(/\.([a-zA-Z0-9]+)$/);
+  return matched ? matched[1].toLowerCase() : "jpg";
+}
+
+async function compressImage(file: File) {
+  if (!file.type.startsWith("image/")) {
+    return file;
+  }
+
+  if (file.type === "image/gif" || file.type === "image/svg+xml") {
+    return file;
+  }
+
+  const dataUrl = await fileToDataUrl(file);
+  const imageSize = await getImageSize(dataUrl);
+  const image = await new Promise<HTMLImageElement>((resolve, reject) => {
+    const element = new window.Image();
+    element.onload = () => resolve(element);
+    element.onerror = () => reject(new Error("图片压缩失败"));
+    element.src = dataUrl;
+  });
+
+  const maxEdge = 2200;
+  const scale = Math.min(1, maxEdge / Math.max(imageSize.width, imageSize.height));
+  const targetWidth = Math.max(1, Math.round(imageSize.width * scale));
+  const targetHeight = Math.max(1, Math.round(imageSize.height * scale));
+  const canvas = document.createElement("canvas");
+  canvas.width = targetWidth;
+  canvas.height = targetHeight;
+
+  const context = canvas.getContext("2d");
+  if (!context) {
+    return file;
+  }
+
+  context.drawImage(image, 0, 0, targetWidth, targetHeight);
+
+  const compressedBlob = await new Promise<Blob | null>((resolve) => {
+    canvas.toBlob(resolve, "image/webp", 0.82);
+  });
+
+  if (!compressedBlob) {
+    return file;
+  }
+
+  const compressedFile = new File(
+    [compressedBlob],
+    `${file.name.replace(/\.[^.]+$/, "") || "image"}.webp`,
+    { type: "image/webp" },
+  );
+
+  return compressedFile.size < file.size ? compressedFile : file;
+}
+
+async function uploadFileToSupabaseWithProgress(
+  file: File,
+  folder: string,
+  onProgress: (loaded: number, total: number) => void,
+) {
+  const filePath = `${folder}/${crypto.randomUUID()}.${getFileExtension(file)}`;
+
+  await new Promise<void>((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open(
+      "POST",
+      `${publicSupabaseUrl}/storage/v1/object/${supabaseStorageBucket}/${filePath}`,
+    );
+    xhr.setRequestHeader("apikey", publicSupabaseAnonKey);
+    xhr.setRequestHeader("Authorization", `Bearer ${publicSupabaseAnonKey}`);
+    xhr.setRequestHeader("x-upsert", "false");
+    xhr.setRequestHeader("content-type", file.type || "application/octet-stream");
+
+    xhr.upload.onprogress = (event) => {
+      if (event.lengthComputable) {
+        onProgress(event.loaded, event.total);
+      }
+    };
+
+    xhr.onload = () => {
+      if (xhr.status >= 200 && xhr.status < 300) {
+        onProgress(file.size, file.size);
+        resolve();
+        return;
+      }
+
+      reject(new Error(xhr.responseText || "上传图片失败"));
+    };
+
+    xhr.onerror = () => reject(new Error("上传图片失败"));
+    xhr.send(file);
+  });
+
+  const { data } = supabase.storage.from(supabaseStorageBucket).getPublicUrl(filePath);
+  return {
+    url: data.publicUrl,
+    name: file.name,
+  };
 }
 
 export default function App() {
@@ -490,8 +620,8 @@ export default function App() {
         {isUploadModalOpen && (
           <UploadModal
             onClose={() => setIsUploadModalOpen(false)}
-            onSuccess={() => {
-              fetchPrompts();
+            onSuccess={(createdPrompt) => {
+              setPrompts((prev) => [normalizePrompt(createdPrompt), ...prev]);
               setIsUploadModalOpen(false);
             }}
           />
@@ -573,6 +703,11 @@ function PromptCard({
           className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105"
           referrerPolicy="no-referrer"
         />
+        {(prompt.originalImageUrls?.length || 0) > 1 && (
+          <div className="absolute left-3 top-3 rounded-full bg-black/55 px-3 py-1 text-[11px] font-bold text-white">
+            共 {prompt.originalImageUrls?.length} 张
+          </div>
+        )}
 
         <div className="absolute inset-0 bg-black/25 opacity-0 group-hover:opacity-100 transition-opacity flex items-end p-4">
           <div className="flex flex-wrap gap-2">
@@ -638,74 +773,70 @@ function PromptCard({
   );
 }
 
-function UploadModal({ onClose, onSuccess }: { onClose: () => void; onSuccess: () => void }) {
+function UploadModal({
+  onClose,
+  onSuccess,
+}: {
+  onClose: () => void;
+  onSuccess: (createdPrompt: Prompt) => void;
+}) {
   const [formData, setFormData] = useState({
     prompt: "",
     tags: [] as string[],
     aspectRatio: "4:3",
     sourceUrl: "",
-    originalImageUrl: "",
-    originalImageName: "",
+    originalImagePreviews: [] as UploadImagePreview[],
     originalImageRatio: "",
-    referenceImageUrl: "",
-    referenceImageName: "",
-    referenceImageRatio: "",
   });
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [tagError, setTagError] = useState("");
   const [submitError, setSubmitError] = useState("");
-  const [originalImageFile, setOriginalImageFile] = useState<File | null>(null);
-  const [referenceImageFile, setReferenceImageFile] = useState<File | null>(null);
+  const [uploadProgress, setUploadProgress] = useState(0);
+  const [uploadStageLabel, setUploadStageLabel] = useState("");
+  const [originalImageFiles, setOriginalImageFiles] = useState<File[]>([]);
 
-  const handleImageChange = async (
-    event: React.ChangeEvent<HTMLInputElement>,
-    type: "original" | "reference",
-  ) => {
-    const file = event.target.files?.[0];
-    if (!file) return;
+  const handleImageChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const fileList = event.target.files;
+    const files: File[] = fileList ? Array.from(fileList) : [];
+    if (files.length === 0) return;
     setSubmitError("");
 
-    const imageUrl = await fileToDataUrl(file);
-    const imageSize = await getImageSize(imageUrl);
+    const imagePreviews = await Promise.all(
+      files.map(async (file) => ({
+        url: await fileToDataUrl(file),
+        name: file.name,
+      })),
+    );
+    const imageSize = await getImageSize(imagePreviews[0].url);
     const detectedAspectRatio = formatActualAspectRatio(imageSize.width, imageSize.height);
-
-    if (type === "original") {
-      setOriginalImageFile(file);
-    } else {
-      setReferenceImageFile(file);
-    }
+    setOriginalImageFiles(files);
 
     setFormData((prev) => ({
       ...prev,
-      aspectRatio: type === "original" ? detectedAspectRatio : prev.aspectRatio,
-      [`${type}ImageUrl`]: imageUrl,
-      [`${type}ImageName`]: file.name,
-      [`${type}ImageRatio`]: detectedAspectRatio,
+      aspectRatio: detectedAspectRatio,
+      originalImagePreviews: imagePreviews,
+      originalImageRatio: detectedAspectRatio,
     }));
 
     event.target.value = "";
   };
 
-  const clearImage = (type: "original" | "reference") => {
-    if (type === "original") {
-      setOriginalImageFile(null);
-    } else {
-      setReferenceImageFile(null);
-    }
-
+  const clearImage = () => {
+    setOriginalImageFiles([]);
+    setUploadProgress(0);
+    setUploadStageLabel("");
     setFormData((prev) => ({
       ...prev,
-      [`${type}ImageUrl`]: "",
-      [`${type}ImageName`]: "",
-      [`${type}ImageRatio`]: "",
+      originalImagePreviews: [],
+      originalImageRatio: "",
     }));
   };
 
   const handleSubmit = async (event: React.FormEvent) => {
     event.preventDefault();
     setSubmitError("");
-    if (!originalImageFile) {
-      setSubmitError("请先上传原图。");
+    if (originalImageFiles.length === 0) {
+      setSubmitError("请先上传至少 1 张原图。");
       return;
     }
     if (formData.tags.length === 0) {
@@ -717,6 +848,8 @@ function UploadModal({ onClose, onSuccess }: { onClose: () => void; onSuccess: (
 
     setIsSubmitting(true);
     try {
+      setUploadProgress(0);
+      setUploadStageLabel("正在压缩图片...");
       const trimmedPrompt = formData.prompt.trim();
       const promptTitle = trimmedPrompt
         ? trimmedPrompt.length > 24
@@ -724,21 +857,47 @@ function UploadModal({ onClose, onSuccess }: { onClose: () => void; onSuccess: (
           : trimmedPrompt
         : "未命名作品";
 
-      const payload = new FormData();
-      payload.append("title", promptTitle);
-      payload.append("prompt", trimmedPrompt || "暂未填写提示词细节");
-      payload.append("aspectRatio", formData.originalImageRatio || formData.aspectRatio || "4:3");
-      payload.append("sourceUrl", formData.sourceUrl.trim());
-      payload.append("tags", JSON.stringify(formData.tags));
-      payload.append("originalImage", originalImageFile);
+      const compressedFiles = await Promise.all(originalImageFiles.map((file) => compressImage(file)));
+      const totalBytes = compressedFiles.reduce((sum, file) => sum + file.size, 0) || 1;
+      let uploadedBytes = 0;
+      const uploadedAssets: UploadedAsset[] = [];
 
-      if (referenceImageFile) {
-        payload.append("referenceImage", referenceImageFile);
+      for (let index = 0; index < compressedFiles.length; index += 1) {
+        const file = compressedFiles[index];
+        const originalFile = originalImageFiles[index];
+        const previousUploadedBytes = uploadedBytes;
+        setUploadStageLabel(`正在上传图片 ${index + 1}/${compressedFiles.length}...`);
+        const asset = await uploadFileToSupabaseWithProgress(file, "originals", (loaded, total) => {
+          const safeTotal = total || file.size || 1;
+          const effectiveLoaded = Math.min(loaded, safeTotal);
+          const overallProgress = Math.round(
+            ((previousUploadedBytes + effectiveLoaded) / totalBytes) * 100,
+          );
+          setUploadProgress(Math.min(99, overallProgress));
+        });
+        uploadedBytes += file.size;
+        uploadedAssets.push({
+          ...asset,
+          name: originalFile?.name || asset.name,
+        });
       }
 
+      setUploadStageLabel("正在保存作品信息...");
+      setUploadProgress(100);
       const response = await fetch("/api/prompts", {
         method: "POST",
-        body: payload,
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          title: promptTitle,
+          prompt: trimmedPrompt || "暂未填写提示词细节",
+          aspectRatio: formData.originalImageRatio || formData.aspectRatio || "4:3",
+          sourceUrl: formData.sourceUrl.trim(),
+          tags: formData.tags,
+          originalImageUrls: uploadedAssets.map((asset) => asset.url),
+          originalImageNames: uploadedAssets.map((asset) => asset.name),
+        }),
       });
 
       if (!response.ok) {
@@ -757,12 +916,14 @@ function UploadModal({ onClose, onSuccess }: { onClose: () => void; onSuccess: (
         throw new Error(errorMessage);
       }
 
-      onSuccess();
+      const createdPrompt = normalizePrompt((await response.json()) as Prompt);
+      onSuccess(createdPrompt);
     } catch (error) {
       console.error(error);
       setSubmitError(error instanceof Error ? error.message : "发布失败，请稍后再试。");
     } finally {
       setIsSubmitting(false);
+      setUploadStageLabel("");
     }
   };
 
@@ -784,7 +945,7 @@ function UploadModal({ onClose, onSuccess }: { onClose: () => void; onSuccess: (
       >
         <div className="p-8 border-b border-border-cream flex items-center justify-between">
           <div>
-            <h2 className="font-bold text-xl text-near-black">上传原图与参考图</h2>
+            <h2 className="font-bold text-xl text-near-black">上传原图</h2>
             <p className="text-sm text-stone mt-1">标题不需要填，上传后可复制提示词，也可下载图片。</p>
           </div>
           <button onClick={onClose} className="text-stone hover:text-near-black transition-colors">
@@ -793,27 +954,16 @@ function UploadModal({ onClose, onSuccess }: { onClose: () => void; onSuccess: (
         </div>
 
         <form onSubmit={handleSubmit} className="p-8 md:p-10 space-y-7 max-h-[85vh] overflow-y-auto custom-scroll">
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          <div>
             <ImageUploadField
               label="原图"
-              hint="必传，上传后会作为作品主图展示"
-              previewUrl={formData.originalImageUrl}
-              fileName={formData.originalImageName}
+              hint="必传，支持一次选择多张，首张会作为作品主图展示"
+              previewImages={formData.originalImagePreviews}
               aspectRatio={formData.originalImageRatio}
               inputId="original-image-upload"
-              onFileChange={(event) => handleImageChange(event, "original")}
-              onClear={() => clearImage("original")}
-            />
-
-            <ImageUploadField
-              label="参考图"
-              hint="可选，可单独上传一张参考图辅助说明"
-              previewUrl={formData.referenceImageUrl}
-              fileName={formData.referenceImageName}
-              aspectRatio={formData.referenceImageRatio}
-              inputId="reference-image-upload"
-              onFileChange={(event) => handleImageChange(event, "reference")}
-              onClear={() => clearImage("reference")}
+              onFileChange={handleImageChange}
+              onClear={clearImage}
+              multiple
             />
           </div>
 
@@ -884,6 +1034,21 @@ function UploadModal({ onClose, onSuccess }: { onClose: () => void; onSuccess: (
             </div>
           )}
 
+          {isSubmitting && (
+            <div className="space-y-3 rounded-2xl border border-border-cream bg-ivory/70 px-4 py-4">
+              <div className="flex items-center justify-between gap-3 text-sm font-bold text-near-black">
+                <span>{uploadStageLabel || "正在准备发布..."}</span>
+                <span>{uploadProgress}%</span>
+              </div>
+              <div className="h-2 overflow-hidden rounded-full bg-sand">
+                <div
+                  className="h-full rounded-full bg-brand transition-[width] duration-200"
+                  style={{ width: `${uploadProgress}%` }}
+                />
+              </div>
+            </div>
+          )}
+
           <div className="pt-2">
             <button
               type="submit"
@@ -905,29 +1070,32 @@ function UploadModal({ onClose, onSuccess }: { onClose: () => void; onSuccess: (
 function ImageUploadField({
   label,
   hint,
-  previewUrl,
-  fileName,
+  previewImages,
   aspectRatio,
   inputId,
   onFileChange,
   onClear,
+  multiple = false,
 }: {
   label: string;
   hint: string;
-  previewUrl?: string;
-  fileName?: string;
+  previewImages?: UploadImagePreview[];
   aspectRatio?: string;
   inputId: string;
   onFileChange: (event: React.ChangeEvent<HTMLInputElement>) => void | Promise<void>;
   onClear: () => void;
+  multiple?: boolean;
 }) {
+  const hasPreviewImages = (previewImages?.length || 0) > 0;
+  const coverPreview = previewImages?.[0];
+
   return (
     <div className="space-y-2">
       <div className="flex items-center justify-between gap-3">
         <label htmlFor={inputId} className="text-xs font-bold text-stone uppercase tracking-wide">
           {label}
         </label>
-        {previewUrl && (
+        {hasPreviewImages && (
           <button
             type="button"
             onClick={onClear}
@@ -942,16 +1110,44 @@ function ImageUploadField({
         htmlFor={inputId}
         className="block border border-dashed border-border-warm rounded-2xl bg-ivory/80 hover:bg-white transition-colors cursor-pointer overflow-hidden"
       >
-        <input id={inputId} type="file" accept="image/*" className="hidden" onChange={onFileChange} />
+        <input
+          id={inputId}
+          type="file"
+          accept="image/*"
+          className="hidden"
+          onChange={onFileChange}
+          multiple={multiple}
+        />
 
-        {previewUrl ? (
+        {hasPreviewImages ? (
           <div className="p-4 space-y-4">
-            <img src={previewUrl} alt={label} className="w-full h-52 object-cover rounded-xl bg-sand" />
+            <img src={coverPreview?.url} alt={label} className="w-full h-52 object-cover rounded-xl bg-sand" />
+            {(previewImages?.length || 0) > 1 && (
+              <div className="grid grid-cols-4 gap-3">
+                {previewImages?.slice(0, 8).map((image, index) => (
+                  <img
+                    key={`${image.name}-${index}`}
+                    src={image.url}
+                    alt={image.name}
+                    className={cn(
+                      "h-20 w-full rounded-xl bg-sand object-cover",
+                      index === 0 ? "ring-2 ring-brand/40" : "",
+                    )}
+                  />
+                ))}
+              </div>
+            )}
             <div className="flex items-center justify-between gap-3">
               <div className="min-w-0">
-                <p className="text-sm font-bold text-near-black truncate">{fileName || `${label}.png`}</p>
+                <p className="text-sm font-bold text-near-black truncate">
+                  {(previewImages?.length || 0) > 1
+                    ? `已选择 ${previewImages?.length} 张原图`
+                    : (coverPreview?.name || `${label}.png`)}
+                </p>
                 <p className="text-xs text-stone">
-                  {aspectRatio ? `实际比例 ${aspectRatio}` : "点击可重新选择图片"}
+                  {aspectRatio
+                    ? `${multiple ? "首张" : "实际"}比例 ${aspectRatio}`
+                    : "点击可重新选择图片"}
                 </p>
               </div>
               <div className="w-10 h-10 rounded-full bg-white border border-border-cream flex items-center justify-center shrink-0">
@@ -964,7 +1160,9 @@ function ImageUploadField({
             <div className="w-14 h-14 rounded-full bg-white border border-border-cream flex items-center justify-center mb-4">
               <Upload size={22} className="text-brand" />
             </div>
-            <p className="text-base font-bold text-near-black mb-2">点击上传{label}</p>
+            <p className="text-base font-bold text-near-black mb-2">
+              {multiple ? `点击上传多张${label}` : `点击上传${label}`}
+            </p>
             <p className="text-sm text-stone max-w-xs">{hint}</p>
           </div>
         )}
