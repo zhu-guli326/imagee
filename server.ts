@@ -9,7 +9,7 @@ import {
   incrementPromptLike,
   incrementPromptView,
   listPrompts,
-} from "./api/_lib/promptStore";
+} from "./api/_lib/promptStore.js";
 
 async function startServer() {
   const app = express();
