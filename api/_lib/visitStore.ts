@@ -14,6 +14,11 @@ export type VisitInput = {
   userAgent?: string;
 };
 
+export type VisitRecord = VisitInput & {
+  id: string;
+  createdAt: string;
+};
+
 type VisitStoreContext = {
   supabaseUrl?: string;
   supabaseServiceRoleKey?: string;
@@ -51,7 +56,7 @@ export async function saveVisit(input: VisitInput) {
   }
 
   const createdAt = new Date().toISOString();
-  const payload = {
+  const payload: VisitRecord = {
     id: uuidv4(),
     createdAt,
     source: input.source,
@@ -79,4 +84,93 @@ export async function saveVisit(input: VisitInput) {
   }
 
   return payload;
+}
+
+function getVisitDayKeys(days: number) {
+  const keys: string[] = [];
+  const base = new Date();
+  for (let i = 0; i < days; i += 1) {
+    const date = new Date(base);
+    date.setDate(base.getDate() - i);
+    keys.push(date.toISOString().slice(0, 10));
+  }
+  return keys;
+}
+
+async function loadVisitsForDay(day: string, context: VisitStoreContext) {
+  const supabaseAdmin = getSupabaseAdminClient(context);
+  if (!supabaseAdmin) {
+    throw new Error("Visit tracking is not configured");
+  }
+
+  const prefix = `data/visits/${day}`;
+  const { data: objects, error: listError } = await supabaseAdmin.storage
+    .from(context.supabaseBucket)
+    .list(prefix, {
+      limit: 1000,
+      sortBy: { column: "name", order: "desc" },
+    });
+
+  if (listError) {
+    const message = listError.message.toLowerCase();
+    if (
+      message.includes("not found") ||
+      message.includes("no such object") ||
+      message.includes("does not exist")
+    ) {
+      return [] as VisitRecord[];
+    }
+    throw listError;
+  }
+
+  const visitObjects = (objects || []).filter((object) => object.name.endsWith(".json"));
+  return await Promise.all(
+    visitObjects.map(async (object) => {
+      const objectPath = `${prefix}/${object.name}`;
+      const { data, error } = await supabaseAdmin.storage
+        .from(context.supabaseBucket)
+        .download(objectPath);
+
+      if (error) {
+        throw error;
+      }
+
+      return JSON.parse(await data.text()) as VisitRecord;
+    }),
+  );
+}
+
+export async function loadVisitSummary(days = 7) {
+  const context = getContext();
+  const dayKeys = getVisitDayKeys(days);
+  const visitGroups = await Promise.all(dayKeys.map((day) => loadVisitsForDay(day, context)));
+  const visits = visitGroups.flat().sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+
+  const sourceTotals = new Map<string, number>();
+  const mediumTotals = new Map<string, number>();
+  const referrerTotals = new Map<string, number>();
+  const landingPathTotals = new Map<string, number>();
+
+  visits.forEach((visit) => {
+    sourceTotals.set(visit.source || "unknown", (sourceTotals.get(visit.source || "unknown") || 0) + 1);
+    mediumTotals.set(visit.medium || "unknown", (mediumTotals.get(visit.medium || "unknown") || 0) + 1);
+    referrerTotals.set(visit.referrerHost || "direct", (referrerTotals.get(visit.referrerHost || "direct") || 0) + 1);
+    landingPathTotals.set(visit.landingPath || "/", (landingPathTotals.get(visit.landingPath || "/") || 0) + 1);
+  });
+
+  const toSortedArray = (input: Map<string, number>) =>
+    Array.from(input.entries())
+      .map(([label, visitsCount]) => ({ label, visits: visitsCount }))
+      .sort((a, b) => b.visits - a.visits);
+
+  return {
+    ok: true,
+    days,
+    totalVisits: visits.length,
+    sources: toSortedArray(sourceTotals),
+    mediums: toSortedArray(mediumTotals),
+    referrers: toSortedArray(referrerTotals),
+    landingPaths: toSortedArray(landingPathTotals),
+    recent: visits.slice(0, 50),
+  };
 }

@@ -169,6 +169,8 @@ function inferSourceFromReferrer(referrer: string) {
   try {
     const referrerUrl = new URL(referrer);
     const host = referrerUrl.hostname.toLowerCase();
+    if (host.includes("chatgpt")) return { source: "chatgpt", referrerHost: host };
+    if (host.includes("openai")) return { source: "openai", referrerHost: host };
     if (host.includes("quark")) return { source: "quark", referrerHost: host };
     if (host.includes("google")) return { source: "google", referrerHost: host };
     if (host.includes("baidu")) return { source: "baidu", referrerHost: host };
@@ -177,6 +179,18 @@ function inferSourceFromReferrer(referrer: string) {
     if (host.includes("so.com")) return { source: "360", referrerHost: host };
     if (host.includes("sm.cn")) return { source: "shenma", referrerHost: host };
     if (host.includes("douyin")) return { source: "douyin", referrerHost: host };
+    if (host.includes("weixin") || host.includes("wechat")) return { source: "wechat", referrerHost: host };
+    if (host.includes("xiaohongshu") || host.includes("xhslink")) return { source: "xiaohongshu", referrerHost: host };
+    if (host.includes("weibo")) return { source: "weibo", referrerHost: host };
+    if (host.includes("zhihu")) return { source: "zhihu", referrerHost: host };
+    if (host.includes("bilibili")) return { source: "bilibili", referrerHost: host };
+    if (host.includes("toutiao") || host.includes("bytedance")) return { source: "toutiao", referrerHost: host };
+    if (host.includes("twitter") || host.includes("x.com")) return { source: "x", referrerHost: host };
+    if (host.includes("facebook")) return { source: "facebook", referrerHost: host };
+    if (host.includes("instagram")) return { source: "instagram", referrerHost: host };
+    if (host.includes("linkedin")) return { source: "linkedin", referrerHost: host };
+    if (host.includes("youtube")) return { source: "youtube", referrerHost: host };
+    if (host.includes("tiktok")) return { source: "tiktok", referrerHost: host };
     return { source: host.replace(/^www\./, ""), referrerHost: host };
   } catch {
     return { source: "referrer", referrerHost: "" };
