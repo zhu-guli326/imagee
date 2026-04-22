@@ -53,6 +53,7 @@ type SignedUploadTarget = {
 
 const LIKED_STORAGE_KEY = "liked_prompts";
 const VIEWED_PROMPTS_KEY = "viewed_prompts";
+const VISIT_TRACKED_KEY = "visit_tracked_v1";
 const ALL_CATEGORY = "全部作品";
 const TAG_OPTIONS = ["UI/UX 设计", "平面海报", "电商海报", "品牌视觉", "插画创意", "好玩的", "有用的"];
 
@@ -158,6 +159,71 @@ function getPromptTitle(prompt: Prompt) {
   return normalizedPrompt.length > 24
     ? `${normalizedPrompt.slice(0, 24)}...`
     : normalizedPrompt;
+}
+
+function inferSourceFromReferrer(referrer: string) {
+  if (!referrer) {
+    return { source: "direct", referrerHost: "" };
+  }
+
+  try {
+    const referrerUrl = new URL(referrer);
+    const host = referrerUrl.hostname.toLowerCase();
+    if (host.includes("quark")) return { source: "quark", referrerHost: host };
+    if (host.includes("google")) return { source: "google", referrerHost: host };
+    if (host.includes("baidu")) return { source: "baidu", referrerHost: host };
+    if (host.includes("bing")) return { source: "bing", referrerHost: host };
+    if (host.includes("sogou")) return { source: "sogou", referrerHost: host };
+    if (host.includes("so.com")) return { source: "360", referrerHost: host };
+    if (host.includes("sm.cn")) return { source: "shenma", referrerHost: host };
+    if (host.includes("douyin")) return { source: "douyin", referrerHost: host };
+    return { source: host.replace(/^www\./, ""), referrerHost: host };
+  } catch {
+    return { source: "referrer", referrerHost: "" };
+  }
+}
+
+async function trackVisit() {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  if (sessionStorage.getItem(VISIT_TRACKED_KEY)) {
+    return;
+  }
+
+  const url = new URL(window.location.href);
+  const referrer = document.referrer || "";
+  const referrerInfo = inferSourceFromReferrer(referrer);
+
+  const source = url.searchParams.get("utm_source") || referrerInfo.source;
+  const medium = url.searchParams.get("utm_medium") || (referrer ? "referrer" : "direct");
+  const campaign = url.searchParams.get("utm_campaign") || "";
+  const term = url.searchParams.get("utm_term") || "";
+  const content = url.searchParams.get("utm_content") || "";
+
+  try {
+    await fetch("/api/visits", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        source,
+        medium,
+        campaign,
+        term,
+        content,
+        landingPath: `${url.pathname}${url.search}`,
+        landingUrl: url.toString(),
+        referrer,
+        referrerHost: referrerInfo.referrerHost,
+      }),
+    });
+    sessionStorage.setItem(VISIT_TRACKED_KEY, "1");
+  } catch (error) {
+    console.error(error);
+  }
 }
 
 async function fileToDataUrl(file: File) {
@@ -317,6 +383,7 @@ export default function App() {
 
   useEffect(() => {
     fetchPrompts();
+    void trackVisit();
   }, []);
 
   useEffect(() => {
