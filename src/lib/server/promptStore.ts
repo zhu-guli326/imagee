@@ -9,6 +9,12 @@ export type UploadedFile = {
   buffer: Buffer;
 };
 
+export type UploadedImagePayload = {
+  name: string;
+  type: string;
+  dataUrl: string;
+};
+
 export type PromptRecord = {
   id: string;
   title: string;
@@ -30,7 +36,8 @@ export type PromptRecord = {
 
 type PromptStoreContext = {
   dataFile: string;
-  metadataObjectPath: string;
+  legacyMetadataObjectPath: string;
+  promptsPrefix: string;
   supabaseUrl?: string;
   supabaseAnonKey?: string;
   supabaseServiceRoleKey?: string;
@@ -49,7 +56,8 @@ function getContext(): PromptStoreContext {
 
   return {
     dataFile: path.join(process.cwd(), "prompts.json"),
-    metadataObjectPath: "data/prompts.json",
+    legacyMetadataObjectPath: "data/prompts.json",
+    promptsPrefix: "data/prompts",
     supabaseUrl,
     supabaseAnonKey,
     supabaseServiceRoleKey,
@@ -89,9 +97,41 @@ async function loadPromptsFromSupabaseStorage(context: PromptStoreContext) {
     throw new Error("Supabase Storage is not configured");
   }
 
+  const { data: objects, error: listError } = await supabaseAdmin.storage
+    .from(context.supabaseBucket)
+    .list(context.promptsPrefix, {
+      limit: 1000,
+      sortBy: { column: "name", order: "desc" },
+    });
+
+  if (listError) {
+    throw listError;
+  }
+
+  const promptObjects = (objects || []).filter((object) => object.name.endsWith(".json"));
+  if (promptObjects.length > 0) {
+    const prompts = await Promise.all(
+      promptObjects.map(async (object) => {
+        const objectPath = `${context.promptsPrefix}/${object.name}`;
+        const { data, error } = await supabaseAdmin.storage
+          .from(context.supabaseBucket)
+          .download(objectPath);
+
+        if (error) {
+          throw error;
+        }
+
+        const rawText = await data.text();
+        return JSON.parse(rawText) as PromptRecord;
+      }),
+    );
+
+    return prompts;
+  }
+
   const { data, error } = await supabaseAdmin.storage
     .from(context.supabaseBucket)
-    .download(context.metadataObjectPath);
+    .download(context.legacyMetadataObjectPath);
 
   if (error) {
     const message = error.message.toLowerCase();
@@ -115,16 +155,16 @@ async function loadPromptsFromSupabaseStorage(context: PromptStoreContext) {
   return Array.isArray(parsed) ? (parsed as PromptRecord[]) : [];
 }
 
-async function savePromptsToSupabaseStorage(context: PromptStoreContext, prompts: PromptRecord[]) {
+async function savePromptToSupabaseStorage(context: PromptStoreContext, prompt: PromptRecord) {
   const supabaseAdmin = getSupabaseAdminClient(context);
   if (!supabaseAdmin) {
     throw new Error("Supabase Storage is not configured");
   }
 
-  const payload = Buffer.from(JSON.stringify(prompts));
+  const payload = Buffer.from(JSON.stringify(prompt));
   const { error } = await supabaseAdmin.storage
     .from(context.supabaseBucket)
-    .upload(context.metadataObjectPath, payload, {
+    .upload(`${context.promptsPrefix}/${prompt.id}.json`, payload, {
       contentType: "application/json; charset=utf-8",
       upsert: true,
     });
@@ -156,7 +196,7 @@ async function savePrompts(prompts: PromptRecord[]) {
   const context = getContext();
 
   if (context.useSupabaseMetadataStore) {
-    await savePromptsToSupabaseStorage(context, prompts);
+    await Promise.all(prompts.map((prompt) => savePromptToSupabaseStorage(context, prompt)));
     return;
   }
 
@@ -210,6 +250,35 @@ export function parseTags(rawTags: unknown) {
   return Array.isArray(rawTags) ? rawTags : [];
 }
 
+async function cleanupUploadedOriginalAssets(paths: string[], context: PromptStoreContext) {
+  if (paths.length === 0) {
+    return;
+  }
+
+  const supabaseAdmin = getSupabaseAdminClient(context);
+  if (!supabaseAdmin) {
+    return;
+  }
+
+  await supabaseAdmin.storage.from(context.supabaseBucket).remove(paths);
+}
+
+function dataUrlToUploadedFile(image: UploadedImagePayload): UploadedFile {
+  const matched = image.dataUrl.match(/^data:(.+);base64,(.+)$/);
+  if (!matched) {
+    throw new Error("Uploaded image payload is invalid");
+  }
+
+  const mimeType = image.type || matched[1] || "application/octet-stream";
+  const buffer = Buffer.from(matched[2], "base64");
+
+  return {
+    originalname: image.name || `image-${uuidv4()}`,
+    mimetype: mimeType,
+    buffer,
+  };
+}
+
 export async function createPromptRecord(input: {
   title?: string;
   prompt?: string;
@@ -217,64 +286,83 @@ export async function createPromptRecord(input: {
   sourceUrl?: string;
   tags?: unknown;
   originalImageFiles?: UploadedFile[];
-  originalImageUrls?: string[];
-  originalImageNames?: string[];
+  originalImages?: UploadedImagePayload[];
   referenceImageFile?: UploadedFile;
   referenceImageUrl?: string;
   referenceImageName?: string;
 }) {
-  const originalImageFiles = input.originalImageFiles || [];
-  const providedOriginalImageUrls = input.originalImageUrls || [];
-  const providedOriginalImageNames = input.originalImageNames || [];
+  const context = getContext();
+  const originalImageFiles = input.originalImageFiles
+    || (input.originalImages || []).map((image) => dataUrlToUploadedFile(image));
   const { referenceImageFile } = input;
 
-  if (originalImageFiles.length === 0 && providedOriginalImageUrls.length === 0) {
+  if (originalImageFiles.length === 0) {
     throw new Error("Original image is required");
   }
 
-  const originalUploads = originalImageFiles.length > 0
-    ? await Promise.all(
-        originalImageFiles.map((file) => uploadImageToSupabase(file, "originals")),
-      )
-    : [];
-  const originalImageUrls = originalUploads.length > 0
-    ? originalUploads.map((upload) => upload.url)
-    : providedOriginalImageUrls;
-  const originalImageNames = originalImageFiles.length > 0
-    ? originalImageFiles.map((file) => file.originalname)
-    : providedOriginalImageNames;
+  const originalUploads = await Promise.all(
+    originalImageFiles.map((file) => uploadImageToSupabase(file, "originals")),
+  );
+  const originalImageUrls = originalUploads.map((upload) => upload.url);
+  const originalImageNames = originalImageFiles.map((file) => file.originalname);
+  const originalImagePaths = originalUploads.map((upload) => upload.path);
   const primaryOriginalUrl = originalImageUrls[0];
   const primaryOriginalName = originalImageNames[0] || "original-image";
   const referenceUpload = referenceImageFile
     ? await uploadImageToSupabase(referenceImageFile, "references")
     : null;
 
-  const newPrompt: PromptRecord = {
-    id: uuidv4(),
-    title: input.title || "Untitled Prompt",
-    prompt: input.prompt || "",
-    imageUrl: primaryOriginalUrl,
-    aspectRatio: input.aspectRatio || "4:3",
-    sourceUrl: input.sourceUrl || "",
-    originalImageUrl: primaryOriginalUrl,
-    originalImageName: primaryOriginalName,
-    originalImageUrls,
-    originalImageNames,
-    referenceImageUrl: referenceUpload?.url || input.referenceImageUrl,
-    referenceImageName: referenceImageFile?.originalname || input.referenceImageName,
-    tags: parseTags(input.tags),
-    likes: 0,
-    views: 0,
-    createdAt: new Date().toISOString(),
-  };
+  try {
+    const newPrompt: PromptRecord = {
+      id: uuidv4(),
+      title: input.title || "Untitled Prompt",
+      prompt: input.prompt || "",
+      imageUrl: primaryOriginalUrl,
+      aspectRatio: input.aspectRatio || "4:3",
+      sourceUrl: input.sourceUrl || "",
+      originalImageUrl: primaryOriginalUrl,
+      originalImageName: primaryOriginalName,
+      originalImageUrls,
+      originalImageNames,
+      referenceImageUrl: referenceUpload?.url || input.referenceImageUrl,
+      referenceImageName: referenceImageFile?.originalname || input.referenceImageName,
+      tags: parseTags(input.tags),
+      likes: 0,
+      views: 0,
+      createdAt: new Date().toISOString(),
+    };
 
-  const prompts = await readPromptsForMutation();
-  prompts.push(newPrompt);
-  await savePrompts(prompts);
-  return newPrompt;
+    if (context.useSupabaseMetadataStore) {
+      await savePromptToSupabaseStorage(context, newPrompt);
+      return newPrompt;
+    }
+
+    const prompts = await readPromptsForMutation();
+    prompts.push(newPrompt);
+    await savePrompts(prompts);
+    return newPrompt;
+  } catch (error) {
+    await cleanupUploadedOriginalAssets(originalImagePaths, context);
+
+    throw error;
+  }
 }
 
 export async function incrementPromptLike(id: string) {
+  const context = getContext();
+
+  if (context.useSupabaseMetadataStore) {
+    const prompts = await loadPromptsFromSupabaseStorage(context);
+    const prompt = prompts.find((item) => item.id === id);
+    if (!prompt) {
+      return null;
+    }
+
+    prompt.likes = (prompt.likes || 0) + 1;
+    await savePromptToSupabaseStorage(context, prompt);
+    return prompt;
+  }
+
   const prompts = await readPromptsForMutation();
   const index = prompts.findIndex((prompt) => prompt.id === id);
 
@@ -288,6 +376,20 @@ export async function incrementPromptLike(id: string) {
 }
 
 export async function incrementPromptView(id: string) {
+  const context = getContext();
+
+  if (context.useSupabaseMetadataStore) {
+    const prompts = await loadPromptsFromSupabaseStorage(context);
+    const prompt = prompts.find((item) => item.id === id);
+    if (!prompt) {
+      return null;
+    }
+
+    prompt.views = (prompt.views || 0) + 1;
+    await savePromptToSupabaseStorage(context, prompt);
+    return prompt;
+  }
+
   const prompts = await readPromptsForMutation();
   const index = prompts.findIndex((prompt) => prompt.id === id);
 

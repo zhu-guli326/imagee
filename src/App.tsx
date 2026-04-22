@@ -22,12 +22,6 @@ import {
 import { AnimatePresence, motion } from "motion/react";
 import confetti from "canvas-confetti";
 import { cn } from "./lib/utils";
-import {
-  publicSupabaseAnonKey,
-  publicSupabaseUrl,
-  supabase,
-  supabaseStorageBucket,
-} from "./lib/supabase";
 
 interface Prompt {
   id: string;
@@ -40,8 +34,6 @@ interface Prompt {
   originalImageName?: string;
   originalImageUrls?: string[];
   originalImageNames?: string[];
-  referenceImageUrl?: string;
-  referenceImageName?: string;
   tags: string[];
   likes: number;
   views: number;
@@ -53,9 +45,10 @@ type UploadImagePreview = {
   name: string;
 };
 
-type UploadedAsset = {
-  url: string;
+type UploadedImagePayload = {
   name: string;
+  type: string;
+  dataUrl: string;
 };
 
 const LIKED_STORAGE_KEY = "liked_prompts";
@@ -208,11 +201,6 @@ async function downloadImage(imageUrl: string, filename: string) {
   }
 }
 
-function getFileExtension(file: File) {
-  const matched = file.name.match(/\.([a-zA-Z0-9]+)$/);
-  return matched ? matched[1].toLowerCase() : "jpg";
-}
-
 async function compressImage(file: File) {
   if (!file.type.startsWith("image/")) {
     return file;
@@ -263,23 +251,17 @@ async function compressImage(file: File) {
   return compressedFile.size < file.size ? compressedFile : file;
 }
 
-async function uploadFileToSupabaseWithProgress(
-  file: File,
-  folder: string,
+async function postJsonWithProgress(
+  url: string,
+  body: unknown,
   onProgress: (loaded: number, total: number) => void,
 ) {
-  const filePath = `${folder}/${crypto.randomUUID()}.${getFileExtension(file)}`;
+  const payload = JSON.stringify(body);
 
-  await new Promise<void>((resolve, reject) => {
+  return await new Promise<string>((resolve, reject) => {
     const xhr = new XMLHttpRequest();
-    xhr.open(
-      "POST",
-      `${publicSupabaseUrl}/storage/v1/object/${supabaseStorageBucket}/${filePath}`,
-    );
-    xhr.setRequestHeader("apikey", publicSupabaseAnonKey);
-    xhr.setRequestHeader("Authorization", `Bearer ${publicSupabaseAnonKey}`);
-    xhr.setRequestHeader("x-upsert", "false");
-    xhr.setRequestHeader("content-type", file.type || "application/octet-stream");
+    xhr.open("POST", url);
+    xhr.setRequestHeader("Content-Type", "application/json");
 
     xhr.upload.onprogress = (event) => {
       if (event.lengthComputable) {
@@ -289,23 +271,22 @@ async function uploadFileToSupabaseWithProgress(
 
     xhr.onload = () => {
       if (xhr.status >= 200 && xhr.status < 300) {
-        onProgress(file.size, file.size);
-        resolve();
+        onProgress(payload.length, payload.length);
+        resolve(xhr.responseText);
         return;
       }
 
-      reject(new Error(xhr.responseText || "上传图片失败"));
+      try {
+        const parsed = JSON.parse(xhr.responseText) as { error?: string };
+        reject(new Error(parsed.error || xhr.responseText || "发布失败，请稍后再试。"));
+      } catch {
+        reject(new Error(xhr.responseText || "发布失败，请稍后再试。"));
+      }
     };
 
-    xhr.onerror = () => reject(new Error("上传图片失败"));
-    xhr.send(file);
+    xhr.onerror = () => reject(new Error("发布失败，请稍后再试。"));
+    xhr.send(payload);
   });
-
-  const { data } = supabase.storage.from(supabaseStorageBucket).getPublicUrl(filePath);
-  return {
-    url: data.publicUrl,
-    name: file.name,
-  };
 }
 
 export default function App() {
@@ -585,7 +566,7 @@ export default function App() {
             <div className="flex flex-col items-center justify-center py-40 border-2 border-dashed border-border-warm rounded-[32px] bg-white">
               <Ghost size={56} className="mb-6 text-stone opacity-30" />
               <h3 className="font-serif text-2xl mb-2 text-near-black">还没有匹配的作品</h3>
-              <p className="text-olive text-sm mb-8 text-center max-w-xs">换个关键词试试，或者先上传你的原图与参考图。</p>
+              <p className="text-olive text-sm mb-8 text-center max-w-xs">换个关键词试试，或者先上传你的原图。</p>
               <button
                 onClick={() => {
                   clearFilters();
@@ -680,12 +661,6 @@ function PromptCard({
     await downloadImage(primaryImageUrl, `${promptTitle}-original.png`);
   };
 
-  const handleDownloadReference = async (event: React.MouseEvent<HTMLButtonElement>) => {
-    event.stopPropagation();
-    if (!prompt.referenceImageUrl) return;
-    await downloadImage(prompt.referenceImageUrl, `${promptTitle}-reference.png`);
-  };
-
   return (
     <motion.div
       ref={setCardElement}
@@ -725,15 +700,6 @@ function PromptCard({
               <Download size={14} />
               下载原图
             </button>
-            {prompt.referenceImageUrl && (
-              <button
-                onClick={handleDownloadReference}
-                className="px-4 py-2 bg-brand text-white rounded-full text-xs font-bold transition-all shadow-xl flex items-center gap-2"
-              >
-                <Download size={14} />
-                下载参考图
-              </button>
-            )}
           </div>
         </div>
       </div>
@@ -858,65 +824,34 @@ function UploadModal({
         : "未命名作品";
 
       const compressedFiles = await Promise.all(originalImageFiles.map((file) => compressImage(file)));
-      const totalBytes = compressedFiles.reduce((sum, file) => sum + file.size, 0) || 1;
-      let uploadedBytes = 0;
-      const uploadedAssets: UploadedAsset[] = [];
-
-      for (let index = 0; index < compressedFiles.length; index += 1) {
-        const file = compressedFiles[index];
-        const originalFile = originalImageFiles[index];
-        const previousUploadedBytes = uploadedBytes;
-        setUploadStageLabel(`正在上传图片 ${index + 1}/${compressedFiles.length}...`);
-        const asset = await uploadFileToSupabaseWithProgress(file, "originals", (loaded, total) => {
-          const safeTotal = total || file.size || 1;
-          const effectiveLoaded = Math.min(loaded, safeTotal);
-          const overallProgress = Math.round(
-            ((previousUploadedBytes + effectiveLoaded) / totalBytes) * 100,
-          );
-          setUploadProgress(Math.min(99, overallProgress));
-        });
-        uploadedBytes += file.size;
-        uploadedAssets.push({
-          ...asset,
-          name: originalFile?.name || asset.name,
-        });
-      }
+      const originalImages: UploadedImagePayload[] = await Promise.all(
+        compressedFiles.map(async (file, index) => ({
+          name: originalImageFiles[index]?.name || file.name,
+          type: file.type || "application/octet-stream",
+          dataUrl: await fileToDataUrl(file),
+        })),
+      );
 
       setUploadStageLabel("正在保存作品信息...");
-      setUploadProgress(100);
-      const response = await fetch("/api/prompts", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
+      const responseText = await postJsonWithProgress(
+        "/api/prompts",
+        {
           title: promptTitle,
           prompt: trimmedPrompt || "暂未填写提示词细节",
           aspectRatio: formData.originalImageRatio || formData.aspectRatio || "4:3",
           sourceUrl: formData.sourceUrl.trim(),
           tags: formData.tags,
-          originalImageUrls: uploadedAssets.map((asset) => asset.url),
-          originalImageNames: uploadedAssets.map((asset) => asset.name),
-        }),
-      });
+          originalImages,
+        },
+        (loaded, total) => {
+          const safeTotal = total || 1;
+          const overallProgress = Math.round((loaded / safeTotal) * 100);
+          setUploadProgress(Math.min(99, overallProgress));
+        },
+      );
+      setUploadProgress(100);
 
-      if (!response.ok) {
-        let errorMessage = "发布失败，请稍后再试。";
-        const rawText = await response.text();
-
-        if (rawText) {
-          try {
-            const parsed = JSON.parse(rawText) as { error?: string };
-            errorMessage = parsed.error || rawText;
-          } catch {
-            errorMessage = rawText;
-          }
-        }
-
-        throw new Error(errorMessage);
-      }
-
-      const createdPrompt = normalizePrompt((await response.json()) as Prompt);
+      const createdPrompt = normalizePrompt(JSON.parse(responseText) as Prompt);
       onSuccess(createdPrompt);
     } catch (error) {
       console.error(error);

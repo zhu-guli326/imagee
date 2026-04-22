@@ -14,7 +14,7 @@ async function startServer() {
   const app = express();
   const PORT = 3000;
 
-  app.use(express.json({ limit: "10mb" }));
+  app.use(express.json({ limit: "50mb" }));
 
   app.get("/api/supabase/status", async (_req, res) => {
     const result = await getSupabaseStatus();
@@ -42,8 +42,7 @@ async function startServer() {
           aspectRatio: req.body.aspectRatio,
           sourceUrl: req.body.sourceUrl,
           tags: req.body.tags,
-          originalImageUrls: req.body.originalImageUrls,
-          originalImageNames: req.body.originalImageNames,
+          originalImages: req.body.originalImages,
         });
 
         return res.status(201).json(prompt);
