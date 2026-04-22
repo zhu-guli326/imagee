@@ -1,11 +1,15 @@
 import { getSupabaseStatus } from "../../src/lib/server/promptStore";
 
-export default async function handler(_req: any, res: any) {
+function json(body: unknown, init?: ResponseInit) {
+  return Response.json(body, init);
+}
+
+export async function GET() {
   try {
     const result = await getSupabaseStatus();
-    return res.status(result.status).json(result.body);
+    return json(result.body, { status: result.status });
   } catch (error) {
     console.error(error);
-    return res.status(500).json({ error: "Failed to check Supabase status" });
+    return json({ error: "Failed to check Supabase status" }, { status: 500 });
   }
 }

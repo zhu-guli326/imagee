@@ -1,22 +1,7 @@
-import {
-  createPromptRecord,
-  listPrompts,
-} from "../src/lib/server/promptStore";
+import { createPromptRecord, listPrompts } from "../src/lib/server/promptStore";
 
-function parseJsonBody(body: unknown) {
-  if (!body) {
-    return {};
-  }
-
-  if (typeof body === "string") {
-    try {
-      return JSON.parse(body) as Record<string, unknown>;
-    } catch {
-      return {};
-    }
-  }
-
-  return typeof body === "object" ? (body as Record<string, unknown>) : {};
+function json(body: unknown, init?: ResponseInit) {
+  return Response.json(body, init);
 }
 
 function pickString(value: unknown) {
@@ -29,40 +14,44 @@ function pickStringArray(value: unknown) {
     : undefined;
 }
 
-export default async function handler(req: any, res: any) {
-  if (req.method === "GET") {
-    try {
-      const search = typeof req.query?.search === "string" ? req.query.search : undefined;
-      const prompts = await listPrompts(search);
-      return res.status(200).json(prompts);
-    } catch (error) {
-      console.error(error);
-      return res.status(500).json({ error: "Failed to fetch prompts" });
-    }
+async function parseJsonBody(request: Request) {
+  try {
+    return await request.json() as Record<string, unknown>;
+  } catch {
+    return {};
   }
+}
 
-  if (req.method === "POST") {
-    try {
-      const body = parseJsonBody(req.body);
-      const prompt = await createPromptRecord({
-        title: pickString(body.title),
-        prompt: pickString(body.prompt),
-        aspectRatio: pickString(body.aspectRatio),
-        sourceUrl: pickString(body.sourceUrl),
-        tags: body.tags,
-        originalImagePaths: pickStringArray(body.originalImagePaths),
-        originalImageNames: pickStringArray(body.originalImageNames),
-      });
-
-      return res.status(201).json(prompt);
-    } catch (error) {
-      console.error(error);
-      const message = error instanceof Error ? error.message : "Failed to save prompt";
-      const status = message === "Original image is required" ? 400 : 500;
-      return res.status(status).json({ error: message });
-    }
+export async function GET(request: Request) {
+  try {
+    const url = new URL(request.url);
+    const search = url.searchParams.get("search") || undefined;
+    const prompts = await listPrompts(search);
+    return json(prompts);
+  } catch (error) {
+    console.error(error);
+    return json({ error: "Failed to fetch prompts" }, { status: 500 });
   }
+}
 
-  res.setHeader("Allow", "GET, POST");
-  return res.status(405).json({ error: "Method not allowed" });
+export async function POST(request: Request) {
+  try {
+    const body = await parseJsonBody(request);
+    const prompt = await createPromptRecord({
+      title: pickString(body.title),
+      prompt: pickString(body.prompt),
+      aspectRatio: pickString(body.aspectRatio),
+      sourceUrl: pickString(body.sourceUrl),
+      tags: body.tags,
+      originalImagePaths: pickStringArray(body.originalImagePaths),
+      originalImageNames: pickStringArray(body.originalImageNames),
+    });
+
+    return json(prompt, { status: 201 });
+  } catch (error) {
+    console.error(error);
+    const message = error instanceof Error ? error.message : "Failed to save prompt";
+    const status = message === "Original image is required" ? 400 : 500;
+    return json({ error: message }, { status });
+  }
 }

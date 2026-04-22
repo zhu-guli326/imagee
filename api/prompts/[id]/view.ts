@@ -1,20 +1,24 @@
 import { incrementPromptView } from "../../../src/lib/server/promptStore";
 
-export default async function handler(req: any, res: any) {
-  if (req.method !== "POST") {
-    res.setHeader("Allow", "POST");
-    return res.status(405).json({ error: "Method not allowed" });
-  }
+function json(body: unknown, init?: ResponseInit) {
+  return Response.json(body, init);
+}
 
+function getPromptId(request: Request) {
+  const segments = new URL(request.url).pathname.split("/").filter(Boolean);
+  return segments.at(-2) || "";
+}
+
+export async function POST(request: Request) {
   try {
-    const prompt = await incrementPromptView(req.query.id);
+    const prompt = await incrementPromptView(getPromptId(request));
     if (!prompt) {
-      return res.status(404).json({ error: "Prompt not found" });
+      return json({ error: "Prompt not found" }, { status: 404 });
     }
 
-    return res.status(200).json(prompt);
+    return json(prompt);
   } catch (error) {
     console.error(error);
-    return res.status(500).json({ error: "Failed to update views" });
+    return json({ error: "Failed to update views" }, { status: 500 });
   }
 }
