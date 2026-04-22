@@ -210,6 +210,11 @@ async function compressImage(file: File) {
     return file;
   }
 
+  // Small uploads are usually faster to send directly than re-encoding in the browser.
+  if (file.size <= 600 * 1024) {
+    return file;
+  }
+
   const dataUrl = await fileToDataUrl(file);
   const imageSize = await getImageSize(dataUrl);
   const image = await new Promise<HTMLImageElement>((resolve, reject) => {
@@ -809,10 +814,10 @@ function PromptCard({
 
       <div className="flex items-start justify-between gap-3">
         <div className="flex-1 min-w-0 pr-2">
-          <h3 className="text-sm font-bold text-near-black truncate group-hover:text-brand transition-colors mb-1">
+          <h3 className="text-sm font-bold text-near-black truncate group-hover:text-brand transition-colors mb-3">
             {promptTitle}
           </h3>
-          <p className="text-xs text-stone line-clamp-2">
+          <p className="text-xs leading-6 text-stone line-clamp-2">
             {prompt.prompt || "暂未填写提示词细节"}
           </p>
         </div>
@@ -920,7 +925,7 @@ function UploadModal({
     setIsSubmitting(true);
     try {
       setUploadProgress(0);
-      setUploadStageLabel("正在压缩图片...");
+      setUploadStageLabel("正在准备上传...");
       const trimmedPrompt = formData.prompt.trim();
       const promptTitle = trimmedPrompt
         ? trimmedPrompt.length > 24
@@ -928,16 +933,18 @@ function UploadModal({
           : trimmedPrompt
         : "未命名作品";
 
-      const compressedFile = await compressImage(originalImageFile);
-      setUploadProgress(15);
-      setUploadStageLabel("正在创建上传凭证...");
-      const [uploadTarget] = await createSignedUploadTargets([originalImageFile.name]);
+      const [compressedFile, uploadTargets] = await Promise.all([
+        compressImage(originalImageFile),
+        createSignedUploadTargets([originalImageFile.name]),
+      ]);
+      setUploadProgress(35);
+      setUploadStageLabel("正在上传图片...");
+      const [uploadTarget] = uploadTargets;
 
       if (!uploadTarget) {
         throw new Error("上传凭证创建失败");
       }
 
-      setUploadStageLabel("正在上传图片...");
       const { error } = await supabase.storage
         .from(supabaseStorageBucket)
         .uploadToSignedUrl(uploadTarget.path, uploadTarget.token, compressedFile, {
