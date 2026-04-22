@@ -1,4 +1,3 @@
-import fs from "fs-extra";
 import path from "path";
 import { v4 as uuidv4 } from "uuid";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
@@ -41,6 +40,11 @@ type PromptStoreContext = {
 
 let localMutationQueue: Promise<unknown> = Promise.resolve();
 
+async function getFsExtra() {
+  const module = await import("fs-extra");
+  return module.default;
+}
+
 function getContext(): PromptStoreContext {
   const supabaseUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
   const supabaseAnonKey = process.env.VITE_SUPABASE_ANON_KEY;
@@ -73,17 +77,20 @@ function getSupabaseAdminClient(context = getContext()): SupabaseClient | null {
 }
 
 async function ensureLocalDataFile(dataFile: string) {
+  const fs = await getFsExtra();
   if (!fs.existsSync(dataFile)) {
     await fs.writeJson(dataFile, []);
   }
 }
 
 async function loadPromptsFromLocalFile(dataFile: string) {
+  const fs = await getFsExtra();
   await ensureLocalDataFile(dataFile);
   return (await fs.readJson(dataFile)) as PromptRecord[];
 }
 
 async function savePromptsToLocalFile(dataFile: string, prompts: PromptRecord[]) {
+  const fs = await getFsExtra();
   const tempFile = `${dataFile}.tmp`;
   await fs.writeFile(tempFile, `${JSON.stringify(prompts, null, 2)}\n`, "utf8");
   await fs.move(tempFile, dataFile, { overwrite: true });

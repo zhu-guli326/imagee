@@ -3,6 +3,32 @@ import {
   listPrompts,
 } from "../src/lib/server/promptStore";
 
+function parseJsonBody(body: unknown) {
+  if (!body) {
+    return {};
+  }
+
+  if (typeof body === "string") {
+    try {
+      return JSON.parse(body) as Record<string, unknown>;
+    } catch {
+      return {};
+    }
+  }
+
+  return typeof body === "object" ? (body as Record<string, unknown>) : {};
+}
+
+function pickString(value: unknown) {
+  return typeof value === "string" ? value : undefined;
+}
+
+function pickStringArray(value: unknown) {
+  return Array.isArray(value) && value.every((item) => typeof item === "string")
+    ? value
+    : undefined;
+}
+
 export default async function handler(req: any, res: any) {
   if (req.method === "GET") {
     try {
@@ -17,14 +43,15 @@ export default async function handler(req: any, res: any) {
 
   if (req.method === "POST") {
     try {
+      const body = parseJsonBody(req.body);
       const prompt = await createPromptRecord({
-        title: req.body?.title,
-        prompt: req.body?.prompt,
-        aspectRatio: req.body?.aspectRatio,
-        sourceUrl: req.body?.sourceUrl,
-        tags: req.body?.tags,
-        originalImagePaths: req.body?.originalImagePaths,
-        originalImageNames: req.body?.originalImageNames,
+        title: pickString(body.title),
+        prompt: pickString(body.prompt),
+        aspectRatio: pickString(body.aspectRatio),
+        sourceUrl: pickString(body.sourceUrl),
+        tags: body.tags,
+        originalImagePaths: pickStringArray(body.originalImagePaths),
+        originalImageNames: pickStringArray(body.originalImageNames),
       });
 
       return res.status(201).json(prompt);

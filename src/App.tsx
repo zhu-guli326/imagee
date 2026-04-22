@@ -261,19 +261,27 @@ async function createSignedUploadTargets(fileNames: string[]) {
   });
 
   if (!response.ok) {
-    try {
-      const parsed = await response.json() as { error?: string };
-      throw new Error(parsed.error || "创建上传凭证失败");
-    } catch (error) {
-      if (error instanceof Error) {
-        throw error;
-      }
-      throw new Error("创建上传凭证失败");
-    }
+    const errorMessage = await getResponseErrorMessage(response, "创建上传凭证失败");
+    throw new Error(errorMessage);
   }
 
   const data = await response.json() as { uploads?: SignedUploadTarget[] };
   return Array.isArray(data.uploads) ? data.uploads : [];
+}
+
+async function getResponseErrorMessage(response: Response, fallback: string) {
+  const contentType = response.headers.get("content-type") || "";
+
+  if (contentType.includes("application/json")) {
+    const parsed = await response.json().catch(() => null) as { error?: string } | null;
+    if (parsed?.error) {
+      return parsed.error;
+    }
+  }
+
+  const rawText = await response.text().catch(() => "");
+  const trimmed = rawText.trim();
+  return trimmed || fallback;
 }
 
 export default function App() {
@@ -464,8 +472,8 @@ export default function App() {
       <section className="bg-[#fff7f2] border-b border-border-cream px-8 py-4">
         <div className="max-w-7xl mx-auto flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
           <div>
-            <p className="text-xs font-bold uppercase tracking-[0.2em] text-brand">使用平台推荐</p>
-            <p className="mt-1 text-sm text-near-black">推荐用 ChatGPT 辅助生成提示词和创建图片。</p>
+            <p className="text-xs font-bold uppercase tracking-[0.2em] text-brand">创作工具</p>
+            <p className="mt-1 text-sm text-near-black">可用 ChatGPT 辅助生成提示词和创建图片。</p>
           </div>
           <div className="flex flex-wrap gap-3">
             <a
@@ -961,8 +969,8 @@ function UploadModal({
       });
 
       if (!response.ok) {
-        const parsed = await response.json().catch(() => ({ error: "发布失败，请稍后再试。" })) as { error?: string };
-        throw new Error(parsed.error || "发布失败，请稍后再试。");
+        const errorMessage = await getResponseErrorMessage(response, "发布失败，请稍后再试。");
+        throw new Error(errorMessage);
       }
 
       const responseText = await response.text();
