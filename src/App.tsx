@@ -24,6 +24,7 @@ import {
 import { motion, AnimatePresence } from "motion/react";
 import { cn } from "./lib/utils";
 import confetti from "canvas-confetti";
+import seedPrompts from "../prompts.json";
 
 interface Prompt {
   id: string;
@@ -35,6 +36,34 @@ interface Prompt {
   createdAt: string;
 }
 
+const PROMPTS_STORAGE_KEY = "prompt_journal_prompts";
+const LIKED_STORAGE_KEY = "liked_prompts";
+
+function loadStoredPrompts(): Prompt[] {
+  if (typeof window === "undefined") {
+    return seedPrompts as Prompt[];
+  }
+
+  const stored = localStorage.getItem(PROMPTS_STORAGE_KEY);
+  if (!stored) {
+    localStorage.setItem(PROMPTS_STORAGE_KEY, JSON.stringify(seedPrompts));
+    return seedPrompts as Prompt[];
+  }
+
+  try {
+    const parsed = JSON.parse(stored);
+    return Array.isArray(parsed) ? parsed : (seedPrompts as Prompt[]);
+  } catch {
+    localStorage.setItem(PROMPTS_STORAGE_KEY, JSON.stringify(seedPrompts));
+    return seedPrompts as Prompt[];
+  }
+}
+
+function savePrompts(prompts: Prompt[]) {
+  if (typeof window === "undefined") return;
+  localStorage.setItem(PROMPTS_STORAGE_KEY, JSON.stringify(prompts));
+}
+
 export default function App() {
   const [prompts, setPrompts] = useState<Prompt[]>([]);
   const [searchQuery, setSearchQuery] = useState("");
@@ -42,7 +71,7 @@ export default function App() {
   const [isUploadModalOpen, setIsUploadModalOpen] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [likedIds, setLikedIds] = useState<string[]>(() => {
-    const saved = localStorage.getItem("liked_prompts");
+    const saved = localStorage.getItem(LIKED_STORAGE_KEY);
     return saved ? JSON.parse(saved) : [];
   });
 
@@ -59,37 +88,30 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    localStorage.setItem("liked_prompts", JSON.stringify(likedIds));
+    localStorage.setItem(LIKED_STORAGE_KEY, JSON.stringify(likedIds));
   }, [likedIds]);
 
-  const fetchPrompts = async () => {
-    try {
-      const res = await fetch("/api/prompts");
-      const data = await res.json();
-      setPrompts(data);
-    } catch (err) {
-      console.error("Failed to fetch prompts");
-    } finally {
-      setIsLoading(false);
-    }
+  const fetchPrompts = () => {
+    setPrompts(loadStoredPrompts());
+    setIsLoading(false);
   };
 
   const handleLike = async (id: string) => {
     if (likedIds.includes(id)) return;
 
     try {
-      const res = await fetch(`/api/prompts/${id}/like`, { method: "POST" });
-      if (res.ok) {
-        const updated = await res.json();
-        setPrompts((prev) => prev.map((p) => (p.id === id ? updated : p)));
-        setLikedIds((prev) => [...prev, id]);
-        confetti({
-          particleCount: 60,
-          spread: 40,
-          origin: { y: 0.7 },
-          colors: ["#c96442", "#d97757", "#87867f"]
-        });
-      }
+      const nextPrompts = prompts.map((p) =>
+        p.id === id ? { ...p, likes: (p.likes || 0) + 1 } : p
+      );
+      setPrompts(nextPrompts);
+      savePrompts(nextPrompts);
+      setLikedIds((prev) => [...prev, id]);
+      confetti({
+        particleCount: 60,
+        spread: 40,
+        origin: { y: 0.7 },
+        colors: ["#c96442", "#d97757", "#87867f"]
+      });
     } catch (err) {
       console.error("Failed to like");
     }
@@ -327,17 +349,19 @@ function UploadModal({ onClose, onSuccess }: { onClose: () => void, onSuccess: (
 
     setIsSubmitting(true);
     try {
-      const res = await fetch("/api/prompts", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          ...formData,
-          tags: formData.tags.split(",").map(t => t.trim()).filter(Boolean)
-        })
-      });
-      if (res.ok) {
-        onSuccess();
-      }
+      const prompts = loadStoredPrompts();
+      const newPrompt: Prompt = {
+        id: crypto.randomUUID(),
+        title: formData.title || "Untitled Prompt",
+        prompt: formData.prompt,
+        imageUrl: formData.imageUrl,
+        tags: formData.tags.split(",").map(t => t.trim()).filter(Boolean),
+        likes: 0,
+        createdAt: new Date().toISOString(),
+      };
+
+      savePrompts([newPrompt, ...prompts]);
+      onSuccess();
     } catch (err) {
       console.error("Upload failed");
     } finally {
