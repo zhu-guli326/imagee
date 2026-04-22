@@ -578,7 +578,7 @@ export default function App() {
               ))}
             </div>
           ) : filteredPrompts.length > 0 ? (
-            <div className="columns-1 sm:columns-2 lg:columns-3 xl:columns-4 gap-8 [column-fill:_balance]">
+            <div className="columns-2 gap-4 md:columns-3 md:gap-8 xl:columns-4 [column-fill:_balance]">
               {filteredPrompts.map((prompt) => (
                 <PromptCard
                   key={prompt.id}
@@ -779,7 +779,7 @@ function PromptCard({
       ref={setCardElement}
       initial={{ opacity: 0, y: 20 }}
       animate={{ opacity: 1, y: 0 }}
-      className="mb-10 inline-block w-full break-inside-avoid group"
+      className="mb-4 inline-block w-full break-inside-avoid group md:mb-10"
     >
       <div
         className="relative w-full rounded-lg overflow-hidden bg-sand mb-4"
@@ -792,11 +792,11 @@ function PromptCard({
           referrerPolicy="no-referrer"
         />
 
-        <div className="absolute inset-0 bg-black/25 opacity-0 group-hover:opacity-100 transition-opacity flex items-end p-4">
+        <div className="absolute inset-0 bg-black/25 opacity-0 transition-opacity group-hover:opacity-100 flex items-end p-3 md:p-4">
           <div className="flex flex-wrap gap-2">
             <button
               onClick={handleCopy}
-              className="px-4 py-2 bg-white text-near-black rounded-full text-xs font-bold transition-all shadow-xl flex items-center gap-2"
+              className="hidden md:flex px-4 py-2 bg-white text-near-black rounded-full text-xs font-bold transition-all shadow-xl items-center gap-2"
             >
               {copied ? <Check size={14} /> : <Copy size={14} />}
               {copied ? "已复制提示词" : "复制提示词"}
@@ -812,24 +812,24 @@ function PromptCard({
         </div>
       </div>
 
-      <div className="flex items-start justify-between gap-3">
-        <div className="flex-1 min-w-0 pr-2">
-          <h3 className="text-sm font-bold text-near-black truncate group-hover:text-brand transition-colors mb-3">
+      <div className="flex items-start justify-between gap-2 md:gap-3">
+        <div className="flex-1 min-w-0 pr-1 md:pr-2">
+          <h3 className="text-xs font-bold text-near-black truncate group-hover:text-brand transition-colors mb-2 md:mb-3 md:text-sm">
             {promptTitle}
           </h3>
-          <p className="text-xs leading-6 text-stone line-clamp-2">
+          <p className="hidden text-xs leading-6 text-stone line-clamp-2 md:block">
             {prompt.prompt || "暂未填写提示词细节"}
           </p>
         </div>
 
-        <div className="flex items-center gap-3 shrink-0">
+        <div className="flex items-center gap-2 shrink-0 md:gap-3">
           <button
             onClick={(event) => {
               event.stopPropagation();
               onLike();
             }}
             className={cn(
-              "flex items-center gap-1 px-1 py-0.5 transition-all text-[11px] font-bold rounded hover:bg-sand",
+              "flex items-center gap-1 px-1 py-0.5 transition-all text-[10px] font-bold rounded hover:bg-sand md:text-[11px]",
               isLiked ? "text-brand" : "text-stone",
             )}
           >
@@ -837,7 +837,7 @@ function PromptCard({
             <span>{prompt.likes}</span>
           </button>
 
-          <div className="flex items-center gap-1 text-stone text-[11px] font-bold">
+          <div className="flex items-center gap-1 text-stone text-[10px] font-bold md:text-[11px]">
             <Eye size={14} />
             <span>{prompt.views}</span>
           </div>
