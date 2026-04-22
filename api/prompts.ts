@@ -23,7 +23,8 @@ export default async function handler(req: any, res: any) {
         aspectRatio: req.body?.aspectRatio,
         sourceUrl: req.body?.sourceUrl,
         tags: req.body?.tags,
-        originalImages: req.body?.originalImages,
+        originalImagePaths: req.body?.originalImagePaths,
+        originalImageNames: req.body?.originalImageNames,
       });
 
       return res.status(201).json(prompt);

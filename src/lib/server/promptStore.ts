@@ -9,12 +9,6 @@ export type UploadedFile = {
   buffer: Buffer;
 };
 
-export type UploadedImagePayload = {
-  name: string;
-  type: string;
-  dataUrl: string;
-};
-
 export type PromptRecord = {
   id: string;
   title: string;
@@ -44,6 +38,8 @@ type PromptStoreContext = {
   supabaseBucket: string;
   useSupabaseMetadataStore: boolean;
 };
+
+let localMutationQueue: Promise<unknown> = Promise.resolve();
 
 function getContext(): PromptStoreContext {
   const supabaseUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
@@ -88,7 +84,15 @@ async function loadPromptsFromLocalFile(dataFile: string) {
 }
 
 async function savePromptsToLocalFile(dataFile: string, prompts: PromptRecord[]) {
-  await fs.writeJson(dataFile, prompts);
+  const tempFile = `${dataFile}.tmp`;
+  await fs.writeFile(tempFile, `${JSON.stringify(prompts, null, 2)}\n`, "utf8");
+  await fs.move(tempFile, dataFile, { overwrite: true });
+}
+
+async function withLocalMutationLock<T>(task: () => Promise<T>) {
+  const run = localMutationQueue.then(task, task);
+  localMutationQueue = run.then(() => undefined, () => undefined);
+  return await run;
 }
 
 async function loadPromptsFromSupabaseStorage(context: PromptStoreContext) {
@@ -250,6 +254,67 @@ export function parseTags(rawTags: unknown) {
   return Array.isArray(rawTags) ? rawTags : [];
 }
 
+function normalizeExtension(fileName: string) {
+  const ext = path.extname(fileName || "").toLowerCase();
+  return ext || ".jpg";
+}
+
+function buildOriginalObjectPath(fileName: string) {
+  return `originals/${uuidv4()}${normalizeExtension(fileName)}`;
+}
+
+function validateOriginalImagePaths(paths: string[], names: string[]) {
+  if (paths.length === 0) {
+    throw new Error("Original image is required");
+  }
+
+  if (paths.length !== names.length) {
+    throw new Error("Uploaded image metadata is invalid");
+  }
+
+  paths.forEach((objectPath) => {
+    if (!objectPath.startsWith("originals/")) {
+      throw new Error("Uploaded image path is invalid");
+    }
+  });
+}
+
+function getPublicUrlForPath(objectPath: string, context: PromptStoreContext) {
+  const supabaseAdmin = getSupabaseAdminClient(context);
+  if (!supabaseAdmin) {
+    throw new Error("Supabase Storage is not configured");
+  }
+
+  const { data } = supabaseAdmin.storage.from(context.supabaseBucket).getPublicUrl(objectPath);
+  return data.publicUrl;
+}
+
+export async function createSignedUploadTargets(fileNames: string[]) {
+  const context = getContext();
+  const supabaseAdmin = getSupabaseAdminClient(context);
+  if (!supabaseAdmin) {
+    throw new Error("Supabase Storage is not configured");
+  }
+
+  return await Promise.all(
+    fileNames.map(async (fileName) => {
+      const objectPath = buildOriginalObjectPath(fileName);
+      const { data, error } = await supabaseAdmin.storage
+        .from(context.supabaseBucket)
+        .createSignedUploadUrl(objectPath);
+
+      if (error || !data) {
+        throw error || new Error("Failed to create signed upload URL");
+      }
+
+      return {
+        path: objectPath,
+        token: data.token,
+      };
+    }),
+  );
+}
+
 async function cleanupUploadedOriginalAssets(paths: string[], context: PromptStoreContext) {
   if (paths.length === 0) {
     return;
@@ -263,22 +328,6 @@ async function cleanupUploadedOriginalAssets(paths: string[], context: PromptSto
   await supabaseAdmin.storage.from(context.supabaseBucket).remove(paths);
 }
 
-function dataUrlToUploadedFile(image: UploadedImagePayload): UploadedFile {
-  const matched = image.dataUrl.match(/^data:(.+);base64,(.+)$/);
-  if (!matched) {
-    throw new Error("Uploaded image payload is invalid");
-  }
-
-  const mimeType = image.type || matched[1] || "application/octet-stream";
-  const buffer = Buffer.from(matched[2], "base64");
-
-  return {
-    originalname: image.name || `image-${uuidv4()}`,
-    mimetype: mimeType,
-    buffer,
-  };
-}
-
 export async function createPromptRecord(input: {
   title?: string;
   prompt?: string;
@@ -286,26 +335,35 @@ export async function createPromptRecord(input: {
   sourceUrl?: string;
   tags?: unknown;
   originalImageFiles?: UploadedFile[];
-  originalImages?: UploadedImagePayload[];
+  originalImagePaths?: string[];
+  originalImageNames?: string[];
   referenceImageFile?: UploadedFile;
   referenceImageUrl?: string;
   referenceImageName?: string;
 }) {
   const context = getContext();
-  const originalImageFiles = input.originalImageFiles
-    || (input.originalImages || []).map((image) => dataUrlToUploadedFile(image));
+  const originalImageFiles = input.originalImageFiles || [];
+  const providedOriginalImagePaths = input.originalImagePaths || [];
+  const providedOriginalImageNames = input.originalImageNames || [];
   const { referenceImageFile } = input;
 
-  if (originalImageFiles.length === 0) {
+  if (originalImageFiles.length === 0 && providedOriginalImagePaths.length === 0) {
     throw new Error("Original image is required");
   }
 
-  const originalUploads = await Promise.all(
-    originalImageFiles.map((file) => uploadImageToSupabase(file, "originals")),
-  );
-  const originalImageUrls = originalUploads.map((upload) => upload.url);
-  const originalImageNames = originalImageFiles.map((file) => file.originalname);
-  const originalImagePaths = originalUploads.map((upload) => upload.path);
+  const originalUploads = originalImageFiles.length > 0
+    ? await Promise.all(
+        originalImageFiles.map((file) => uploadImageToSupabase(file, "originals")),
+      )
+    : [];
+  const originalImagePaths = originalUploads.length > 0
+    ? originalUploads.map((upload) => upload.path)
+    : providedOriginalImagePaths;
+  const originalImageNames = originalImageFiles.length > 0
+    ? originalImageFiles.map((file) => file.originalname)
+    : providedOriginalImageNames;
+  validateOriginalImagePaths(originalImagePaths, originalImageNames);
+  const originalImageUrls = originalImagePaths.map((objectPath) => getPublicUrlForPath(objectPath, context));
   const primaryOriginalUrl = originalImageUrls[0];
   const primaryOriginalName = originalImageNames[0] || "original-image";
   const referenceUpload = referenceImageFile
@@ -337,12 +395,16 @@ export async function createPromptRecord(input: {
       return newPrompt;
     }
 
-    const prompts = await readPromptsForMutation();
-    prompts.push(newPrompt);
-    await savePrompts(prompts);
-    return newPrompt;
+    return await withLocalMutationLock(async () => {
+      const prompts = await readPromptsForMutation();
+      prompts.push(newPrompt);
+      await savePrompts(prompts);
+      return newPrompt;
+    });
   } catch (error) {
-    await cleanupUploadedOriginalAssets(originalImagePaths, context);
+    if (originalImageFiles.length === 0) {
+      await cleanupUploadedOriginalAssets(originalImagePaths, context);
+    }
 
     throw error;
   }
@@ -363,16 +425,18 @@ export async function incrementPromptLike(id: string) {
     return prompt;
   }
 
-  const prompts = await readPromptsForMutation();
-  const index = prompts.findIndex((prompt) => prompt.id === id);
+  return await withLocalMutationLock(async () => {
+    const prompts = await readPromptsForMutation();
+    const index = prompts.findIndex((prompt) => prompt.id === id);
 
-  if (index === -1) {
-    return null;
-  }
+    if (index === -1) {
+      return null;
+    }
 
-  prompts[index].likes = (prompts[index].likes || 0) + 1;
-  await savePrompts(prompts);
-  return prompts[index];
+    prompts[index].likes = (prompts[index].likes || 0) + 1;
+    await savePrompts(prompts);
+    return prompts[index];
+  });
 }
 
 export async function incrementPromptView(id: string) {
@@ -390,16 +454,18 @@ export async function incrementPromptView(id: string) {
     return prompt;
   }
 
-  const prompts = await readPromptsForMutation();
-  const index = prompts.findIndex((prompt) => prompt.id === id);
+  return await withLocalMutationLock(async () => {
+    const prompts = await readPromptsForMutation();
+    const index = prompts.findIndex((prompt) => prompt.id === id);
 
-  if (index === -1) {
-    return null;
-  }
+    if (index === -1) {
+      return null;
+    }
 
-  prompts[index].views = (prompts[index].views || 0) + 1;
-  await savePrompts(prompts);
-  return prompts[index];
+    prompts[index].views = (prompts[index].views || 0) + 1;
+    await savePrompts(prompts);
+    return prompts[index];
+  });
 }
 
 export async function getSupabaseStatus() {

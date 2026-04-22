@@ -4,6 +4,7 @@ import { createServer as createViteServer } from "vite";
 import path from "path";
 import {
   createPromptRecord,
+  createSignedUploadTargets,
   getSupabaseStatus,
   incrementPromptLike,
   incrementPromptView,
@@ -42,7 +43,8 @@ async function startServer() {
           aspectRatio: req.body.aspectRatio,
           sourceUrl: req.body.sourceUrl,
           tags: req.body.tags,
-          originalImages: req.body.originalImages,
+          originalImagePaths: req.body.originalImagePaths,
+          originalImageNames: req.body.originalImageNames,
         });
 
         return res.status(201).json(prompt);
@@ -54,6 +56,18 @@ async function startServer() {
       }
     },
   );
+
+  app.post("/api/uploads/sign", async (req, res) => {
+    try {
+      const fileNames = Array.isArray(req.body?.fileNames) ? req.body.fileNames : [];
+      const uploads = await createSignedUploadTargets(fileNames);
+      return res.json({ uploads });
+    } catch (error) {
+      console.error(error);
+      const message = error instanceof Error ? error.message : "Failed to create upload targets";
+      return res.status(500).json({ error: message });
+    }
+  });
 
   app.post("/api/prompts/:id/like", async (req, res) => {
     try {
